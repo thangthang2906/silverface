@@ -1,0 +1,187 @@
+name: Build watchface
+on: workflow_dispatch
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - run: pip install pillow
+      - name: Generate project
+        run: |
+          set -e
+          mkdir -p app/src/main/res/{raw,xml,values,drawable-nodpi}
+          cat > settings.gradle <<'G1'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+          rootProject.name = "SilverFace"
+          include ':app'
+          G1
+          cat > build.gradle <<'G2'
+          plugins { id 'com.android.application' version '8.5.2' apply false }
+          G2
+          cat > app/build.gradle <<'G3'
+          plugins { id 'com.android.application' }
+          android {
+              namespace 'com.example.silverface'
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'com.example.silverface'
+                  minSdk 33
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          G3
+          cat > app/src/main/AndroidManifest.xml <<'M1'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-feature android:name="android.hardware.type.watch" />
+              <application android:label="@string/app_name" android:hasCode="false">
+                  <property android:name="com.google.wear.watchface.format.version" android:value="1" />
+              </application>
+          </manifest>
+          M1
+          cat > app/src/main/res/values/strings.xml <<'S1'
+          <resources><string name="app_name">Silver Classic</string></resources>
+          S1
+          cat > app/src/main/res/xml/watch_face_info.xml <<'I1'
+          <?xml version="1.0" encoding="utf-8"?>
+          <WatchFaceInfo>
+              <Preview value="@drawable/preview" />
+          </WatchFaceInfo>
+          I1
+          cat > app/src/main/res/raw/watchface.xml <<'W1'
+          <?xml version="1.0" encoding="utf-8"?>
+          <WatchFace width="480" height="480">
+            <Metadata key="CLOCK_TYPE" value="ANALOG" />
+            <Metadata key="PREVIEW_TIME" value="10:08:32" />
+            <Scene backgroundColor="#ff000000">
+              <PartImage x="0" y="0" width="480" height="480">
+                <Image resource="dial" />
+              </PartImage>
+              <PartText x="200" y="122" width="80" height="50">
+                <Text align="CENTER">
+                  <Font family="SANS_SERIF" size="36" weight="BOLD" color="#ff202830">
+                    <Template>%d<Parameter expression="[DAY]" /></Template>
+                  </Font>
+                </Text>
+              </PartText>
+              <PartText x="140" y="182" width="200" height="32">
+                <Text align="CENTER">
+                  <Font family="SANS_SERIF" size="24" weight="BOLD" color="#ff202830">
+                    <Template>%s %d<Parameter expression="[MONTH_S]" /><Parameter expression="[YEAR]" /></Template>
+                  </Font>
+                </Text>
+              </PartText>
+              <PartText x="125" y="283" width="80" height="40">
+                <Text align="CENTER">
+                  <Font family="SANS_SERIF" size="26" weight="BOLD" color="#ff202830">
+                    <Template>%d<Parameter expression="[BATTERY_PERCENT]" /></Template>
+                  </Font>
+                </Text>
+              </PartText>
+              <PartText x="275" y="283" width="80" height="40">
+                <Text align="CENTER">
+                  <Font family="SANS_SERIF" size="24" weight="BOLD" color="#ff202830">
+                    <Template>%s<Parameter expression="[DAY_OF_WEEK_S]" /></Template>
+                  </Font>
+                </Text>
+              </PartText>
+              <AnalogClock x="0" y="0" width="480" height="480">
+                <HourHand resource="hour" x="0" y="0" width="480" height="480" pivotX="0.5" pivotY="0.5" />
+                <MinuteHand resource="minute" x="0" y="0" width="480" height="480" pivotX="0.5" pivotY="0.5" />
+                <SecondHand resource="second" x="0" y="0" width="480" height="480" pivotX="0.5" pivotY="0.5">
+                  <Sweep frequency="15" />
+                  <Variant mode="AMBIENT" target="alpha" value="0" />
+                </SecondHand>
+              </AnalogClock>
+            </Scene>
+          </WatchFace>
+          W1
+          cat > make_assets.py <<'PY'
+          from PIL import Image, ImageDraw, ImageFont
+          import math, os, random
+          S, C = 480, 240
+          R = 'app/src/main/res/drawable-nodpi/'
+          random.seed(7)
+          def font(sz):
+              for p in ('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+                        '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf'):
+                  if os.path.exists(p):
+                      return ImageFont.truetype(p, sz)
+              return ImageFont.load_default(sz)
+          def pt(r, a, off=0):
+              a = math.radians(a)
+              return (C + r*math.sin(a) + off*math.cos(a), C - r*math.cos(a) + off*math.sin(a))
+          def mix(c1, c2, t):
+              return tuple(int(c1[i] + (c2[i]-c1[i])*t) for i in range(3)) + (255,)
+          dial = Image.new('RGBA', (S, S), (0, 0, 0, 255))
+          d = ImageDraw.Draw(dial)
+          for r in range(236, 0, -1):
+              if r >= 192:
+                  col = mix((168, 178, 190), (214, 222, 232), (236-r)/44)
+              else:
+                  col = mix((196, 208, 224), (226, 233, 242), (192-r)/192)
+              d.ellipse((C-r, C-r, C+r, C+r), fill=col)
+          d.ellipse((C-192, C-192, C+192, C+192), outline=(120, 132, 150, 255), width=2)
+          mask = Image.new('L', (S, S), 0)
+          ImageDraw.Draw(mask).ellipse((C-236, C-236, C+236, C+236), fill=255)
+          brush = Image.new('RGBA', (S, S), (0, 0, 0, 0))
+          bd = ImageDraw.Draw(brush)
+          for y in range(S):
+              v = random.randint(0, 34)
+              bd.line((0, y, S, y), fill=(255, 255, 255, v) if y % 2 else (0, 0, 0, v//2))
+          brush.putalpha(Image.composite(brush.getchannel('A'), Image.new('L', (S, S), 0), mask))
+          dial.alpha_composite(brush)
+          d = ImageDraw.Draw(dial)
+          for h in range(12):
+              a = h*30
+              if h % 3 == 0:
+                  d.polygon([pt(198, a, -3), pt(198, a, 3), pt(228, a, 10), pt(228, a, -10)], fill=(14, 14, 16, 255))
+              else:
+                  x, y = pt(212, a)
+                  d.ellipse((x-6, y-6, x+6, y+6), fill=(40, 42, 48, 255))
+              n = h if h else 12
+              x, y = pt(158, a)
+              d.text((x, y), str(n), font=font(46 if h % 3 == 0 else 34), fill=(22, 24, 28, 255), anchor='mm')
+          for cx in (165, 315):
+              d.ellipse((cx-44, 305-44, cx+44, 305+44), fill=(205, 218, 232, 255), outline=(140, 156, 178, 255), width=3)
+          d.text((165, 338), "BAT %", font=font(13), fill=(60, 70, 85, 255), anchor='mm')
+          d.text((315, 338), "DAY", font=font(13), fill=(60, 70, 85, 255), anchor='mm')
+          d.rectangle((200, 122, 280, 172), fill=(240, 244, 248, 255), outline=(60, 66, 76, 255), width=3)
+          dial.save(R + 'dial.png')
+          def hand(name, L, w0, w1, tail, hub=0):
+              im = Image.new('RGBA', (S, S), (0, 0, 0, 0))
+              g = ImageDraw.Draw(im)
+              col = (14, 14, 16, 255)
+              g.polygon([(C-w0, C+tail), (C+w0, C+tail), (C+w1, C-L), (C-w1, C-L)], fill=col)
+              g.ellipse((C-(hub or 13), C-(hub or 13), C+(hub or 13), C+(hub or 13)), fill=col)
+              im.save(R + name + '.png')
+              return im
+          h = hand('hour', 120, 9, 6, 28)
+          m = hand('minute', 180, 7, 4, 30)
+          s = hand('second', 205, 2, 2, 60, hub=9)
+          pv = dial.copy()
+          g = ImageDraw.Draw(pv)
+          g.text((240, 147), "28", font=font(36), fill=(32, 40, 48, 255), anchor='mm')
+          g.text((240, 198), "Jun 2026", font=font(24), fill=(32, 40, 48, 255), anchor='mm')
+          g.text((165, 305), "86", font=font(26), fill=(32, 40, 48, 255), anchor='mm')
+          g.text((315, 305), "Sun", font=font(24), fill=(32, 40, 48, 255), anchor='mm')
+          for im, a in ((h, 304), (m, 48), (s, 200)):
+              pv.alpha_composite(im.rotate(-a, resample=Image.BICUBIC))
+          pv.save(R + 'preview.png')
+          PY
+          python3 make_assets.py
+      - run: gradle assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SilverFace-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
